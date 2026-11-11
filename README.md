@@ -1,26 +1,14 @@
-# Bitcask Java — Persistent Key-Value Storage Engine
+ <div align="center">
 
-<div align="center">
+# Bitcask Java
 
-  <h3>A lightweight, log-structured key-value storage engine built from scratch using Java 21.</h3>
+### A Log-Structured Key-Value Storage Engine
 
-  <p>
-    Inspired by the <a href="https://riak.com/assets/bitcask-intro.pdf">Bitcask paper</a>,
-    this project explores append-only storage, in-memory indexing, crash recovery, and log compaction.
-  </p>
+[![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk)](https://www.oracle.com/java/)
+[![Storage](https://img.shields.io/badge/Storage-Log--Structured-blue)]()
+[![Status](https://img.shields.io/badge/Status-Completed-success)]()
 
-  <p>
-    <img src="https://img.shields.io/badge/Java-21-orange?style=for-the-badge&logo=openjdk&logoColor=white" alt="Java 21"/>
-    <img src="https://img.shields.io/badge/Storage-Log--Structured-blue?style=for-the-badge" alt="Log Structured"/>
-    <img src="https://img.shields.io/badge/Dependencies-None-success?style=for-the-badge" alt="No Dependencies"/>
-  </p>
-
-  <p>
-    <strong>Append-only Log</strong> &nbsp;•&nbsp;
-    <strong>HashMap Index</strong> &nbsp;•&nbsp;
-    <strong>Tombstone Deletion</strong> &nbsp;•&nbsp;
-    <strong>Log Compaction</strong>
-  </p>
+A lightweight persistent key-value store inspired by the Bitcask storage model, implemented from scratch using Java 21.
 
 </div>
 
@@ -28,244 +16,203 @@
 
 ## Overview
 
-**Bitcask Java** is a persistent key-value storage engine implemented from scratch in Java 21.
+Bitcask Java is a log-structured key-value storage engine that stores data in an append-only binary log and maintains an in-memory hash table for efficient key lookups.
 
-Instead of modifying values in place, the engine appends every insert, update, and deletion to a binary log file. An in-memory `HashMap`, called the **KeyDir**, maintains the latest location of each active key, allowing efficient lookups without scanning the entire log.
+Instead of modifying existing records, every update is appended as a new record. An in-memory index called the **KeyDir** tracks the location of the latest value for each key.
 
-The project demonstrates fundamental concepts behind log-structured storage systems and database internals.
+The project demonstrates fundamental storage-engine concepts, including append-only logging, indexing, tombstone-based deletion, startup recovery, and log compaction.
 
 ## Features
 
-<table>
-  <tr>
-    <td width="50%">
-      <h3>Append-Only Storage</h3>
-      <p>Persists records sequentially in a binary log, avoiding in-place updates.</p>
-    </td>
-    <td width="50%">
-      <h3>In-Memory Indexing</h3>
-      <p>Uses a HashMap-based KeyDir for average O(1) key lookups.</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <h3>Persistent Operations</h3>
-      <p>Supports PUT, GET, and DELETE operations with disk-backed storage.</p>
-    </td>
-    <td width="50%">
-      <h3>Tombstone Deletion</h3>
-      <p>Represents deletions using special records in the append-only log.</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <h3>Startup Recovery</h3>
-      <p>Reconstructs the in-memory index by scanning the log during startup.</p>
-    </td>
-    <td width="50%">
-      <h3>Log Compaction</h3>
-      <p>Reclaims disk space by rewriting only the latest active records.</p>
-    </td>
-  </tr>
-</table>
+| Feature | Description |
+|---|---|
+| PUT | Insert or update key-value pairs |
+| GET | Retrieve values using the in-memory index |
+| DELETE | Delete keys using tombstone records |
+| Append-only storage | Store updates as new records rather than overwriting existing data |
+| In-memory KeyDir | Maintain key-to-file-position mappings using a HashMap |
+| Startup recovery | Rebuild the KeyDir by scanning the data file |
+| Crash-tail recovery | Detect and truncate incomplete trailing records |
+| Compaction | Remove obsolete records and reclaim disk space |
+| CLI | Interact with the storage engine through a command-line interface |
+| Benchmarking | Measure PUT and GET throughput across multiple trials |
 
 ## Architecture
 
-The engine combines an in-memory index with persistent disk storage.
+Bitcask uses an append-only log for persistent storage and an in-memory KeyDir for fast lookups.
 
 ```text
-                  +---------------------------+
-                  |          Main CLI         |
-                  |     PUT / GET / DELETE     |
-                  |          COMPACT           |
-                  +-------------+-------------+
-                                |
-                                v
-                  +---------------------------+
-                  |       Bitcask Engine       |
-                  +-------------+-------------+
-                                |
-                +---------------+---------------+
-                |                               |
-                v                               v
-       +-------------------+          +----------------------+
-       |   In-Memory       |          |   Append-Only Log    |
-       |     KeyDir        |          |      data.bin        |
-       |                   |          |                      |
-       | Key -> Position   |--------->| Binary Records       |
-       |       -> Size     |          | Tombstone Records    |
-       +-------------------+          +----------------------+
+                 Client / CLI
+                      |
+                      v
+                Bitcask Engine
+                      |
+          +-----------+-----------+
+          |                       |
+          v                       v
+       PUT / DELETE              GET
+          |                       |
+          v                       v
+     Append Record           Consult KeyDir
+          |                       |
+          v                       v
+      data.bin              Find Value Position
+          |                       |
+          v                       v
+     Update KeyDir            Read Value
+          |
+          v
+    In-memory HashMap
 ```
 
 ### KeyDir
 
-The KeyDir is an in-memory `HashMap<String, KeyDirEntry>`.
+The KeyDir is an in-memory `HashMap<String, KeyDirEntry>` that maintains the location of the latest value for each key.
 
-For each active key, it stores:
+Each entry stores:
 
-- `valuePosition` — byte offset where the value begins in the data file.
-- `valueSize` — number of bytes occupied by the value.
+- Value position in the data file.
+- Value size in bytes.
 
-When a GET operation is performed, the engine looks up the key in KeyDir and seeks directly to its value position in the file.
+This allows the engine to locate values directly without scanning the entire data file for every GET operation.
 
-This avoids sequentially scanning the entire data file for every read.
+HashMap lookups have average-case O(1) time complexity.
 
-## Binary Record Format
+### Data File Format
 
-Records are persisted in binary format using big-endian integers and UTF-8 encoded keys and values.
+All records are stored in a binary append-only file named `data.bin`.
 
-### Standard Record — PUT
-
-```text
-+--------------------+--------------------+------------------+-------------------+
-| keyLength (4 bytes)| valueLength (4 B)  | keyBytes         | valueBytes        |
-+--------------------+--------------------+------------------+-------------------+
-                                          UTF-8              UTF-8
-```
-
-### Tombstone Record — DELETE
+Each record follows this structure:
 
 ```text
-+--------------------+--------------------+------------------+
-| keyLength (4 bytes)| valueLength = -1    | keyBytes         |
-+--------------------+--------------------+------------------+
-                                          UTF-8
++-------------------+
+| Key Length (4 B)  |
++-------------------+
+| Value Length (4 B)|
++-------------------+
+| Key Bytes         |
++-------------------+
+| Value Bytes       |
++-------------------+
 ```
 
-Each record contains:
+- Key Length: Size of the key in bytes.
+- Value Length: Size of the value in bytes.
+- Key Bytes: UTF-8 encoded key.
+- Value Bytes: UTF-8 encoded value.
 
-| Field | Description |
-|---|---|
-| `keyLength` | 4-byte integer representing the key's byte length |
-| `valueLength` | 4-byte integer representing the value's byte length |
-| `keyBytes` | UTF-8 encoded key |
-| `valueBytes` | UTF-8 encoded value |
-| Tombstone | Special record with `valueLength = -1` |
+The length fields are stored as 4-byte integers.
 
-Tombstones do not contain value bytes. They indicate that the corresponding key has been deleted.
+### Tombstone-Based Deletion
+
+Deleting a key does not physically remove its previous record.
+
+Instead, the engine appends a special tombstone record with a value length of `-1`.
+
+```text
+Key Length  | -1 | Key Bytes
+```
+
+When the engine encounters a tombstone during recovery, it removes that key from the KeyDir.
+
+This ensures that deleted values do not reappear after restarting the application.
 
 ## Core Operations
 
-### 1. PUT — Insert or Update
+### PUT
 
-- Converts the key and value into UTF-8 byte arrays.
-- Appends a new record to the end of the log.
-- Updates KeyDir with the latest value position and size.
-- Previous versions remain in the log until compaction.
+1. Convert the key and value into UTF-8 byte arrays.
+2. Append a new record to the data file.
+3. Record the value's position and size in the KeyDir.
 
-### 2. GET — Retrieve
+Updating an existing key appends a new record, leaving the older record untouched.
 
-- Looks up the requested key in KeyDir.
-- Retrieves its stored value position and size.
-- Seeks directly to the corresponding position in the data file.
-- Reads and returns the value.
-- Returns `null` if the key does not exist.
+### GET
 
-### 3. DELETE — Remove
+1. Look up the key in the KeyDir.
+2. Retrieve its stored file position and value size.
+3. Seek directly to that position in the data file.
+4. Read and return the value.
 
-- Appends a tombstone record to the log.
-- Removes the key from KeyDir.
-- Subsequent GET operations return `null`.
-- The old record remains on disk until compaction.
+### DELETE
 
-### 4. COMPACT — Reclaim Storage
+1. Append a tombstone record to the data file.
+2. Remove the key from the in-memory KeyDir.
 
-Repeated updates and deletions leave obsolete records in the append-only log.
+### Startup Recovery
 
-Compaction reclaims storage by:
+When the engine starts, it scans the data file sequentially and rebuilds the KeyDir.
 
-1. Creating a temporary compacted file.
-2. Reading the latest active values using KeyDir.
-3. Writing only active key-value records into the temporary file.
-4. Replacing the original data file with the compacted file.
-5. Rebuilding KeyDir with the new value positions.
+For each record, it:
 
-This eliminates obsolete versions and deleted records from the log.
+1. Reads the key and value lengths.
+2. Validates that the record contains the required bytes.
+3. Reads the key.
+4. Updates the KeyDir with the latest value position, or removes the key if it encounters a tombstone.
 
-## Startup Recovery
+If an incomplete trailing record is detected, the file is truncated from that record's starting position.
 
-The in-memory KeyDir is not persisted separately. Instead, it is reconstructed whenever the application starts.
+### Compaction
 
-The recovery process:
+Since updates are appended instead of overwriting existing records, the data file can accumulate obsolete versions of keys and deleted records.
 
-1. Opens the existing data file.
-2. Sequentially scans records from the beginning.
-3. Reads each record's header, key, and value information.
-4. Updates KeyDir when a key-value record is encountered.
-5. Removes keys from KeyDir when their tombstones are encountered.
-6. Detects incomplete trailing records and truncates the log to the beginning of the incomplete record.
+Compaction creates a new file containing only the latest active values.
 
-This allows the engine to rebuild its in-memory index from persistent data after restarting.
+```text
+Before Compaction:
 
-<blockquote>
-  <strong>Recovery limitation:</strong> The implementation handles incomplete trailing records but does not provide general protection against arbitrary corruption within earlier records.
-</blockquote>
+data.bin
++------------------+
+| name = Rahul     |
+| city = Bengaluru |
+| name = Prajwal   |
+| language = Java  |
+| DELETE language  |
++------------------+
+
+After Compaction:
+
+compacted.bin
++------------------+
+| name = Prajwal   |
+| city = Bengaluru |
++------------------+
+```
+
+The compacted file replaces the original data file, and the KeyDir is rebuilt with the new value positions.
 
 ## Benchmark Results
 
-A basic performance benchmark was conducted using 10,000 key-value records per trial, with JVM warm-up followed by three measured trials.
+A local performance benchmark was conducted to measure PUT and GET throughput.
 
-<div align="center">
+The benchmark uses JVM warm-up, 10 measured trials, and correctness verification for GET operations.
 
-  <h3>Average Performance</h3>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Operation</th>
-        <th>Average Time</th>
-        <th>Throughput</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><strong>PUT</strong></td>
-        <td>0.190 seconds</td>
-        <td><strong>~52,524 ops/sec</strong></td>
-      </tr>
-      <tr>
-        <td><strong>GET</strong></td>
-        <td>0.098 seconds</td>
-        <td><strong>~101,559 ops/sec</strong></td>
-      </tr>
-    </tbody>
-  </table>
-
-</div>
+| Operation | Average Throughput | Median Time |
+|---|---:|---:|
+| PUT | ~54,811 ops/sec | 0.176 seconds |
+| GET | ~105,795 ops/sec | 0.092 seconds |
 
 ### Benchmark Configuration
 
-| Parameter | Value |
-|---|---|
-| Records per trial | 10,000 |
-| Measured trials | 3 |
-| Warm-up | 2,000 PUT and GET operations |
-| Time measurement | `System.nanoTime()` |
-| Environment | Java 21 on Ubuntu Linux |
+- Records per trial: 10,000
+- Warm-up: 2,000 PUT and GET operations
+- Measured trials: 10
+- Timing mechanism: `System.nanoTime()`
+- GET operations: Results verified against expected values
+- Runtime: Java 21
+- Environment: Ubuntu Linux
 
-<sub>Results are from a basic local benchmark and may vary depending on hardware, filesystem, JVM behavior, and system conditions. These measurements are not a comparison against other databases.</sub>
+*Note: These are local benchmark measurements, not comparisons against established databases. Results depend on the machine, JVM, storage device, and workload. File open/close overhead is included in each operation.*
 
 ## Technology Stack
 
-<div align="center">
-
-  <img src="https://img.shields.io/badge/Java-21-orange?style=flat-square&logo=openjdk" alt="Java"/>
-  <img src="https://img.shields.io/badge/Java%20NIO-File%20Operations-blue?style=flat-square" alt="Java NIO"/>
-  <img src="https://img.shields.io/badge/HashMap-In--Memory%20Index-green?style=flat-square" alt="HashMap"/>
-  <img src="https://img.shields.io/badge/Build-javac-lightgrey?style=flat-square" alt="javac"/>
-
-</div>
-
-| Component | Technology |
+| Technology | Purpose |
 |---|---|
-| Programming Language | Java 21 |
-| File I/O | `RandomAccessFile` |
-| In-Memory Index | `HashMap` |
-| Binary Serialization | UTF-8 and Java primitive types |
-| File Operations | Java NIO |
-| Build | Java compiler (`javac`) |
-
-**Dependencies:** None. The project uses standard Java libraries.
+| Java 21 | Core implementation |
+| HashMap | In-memory KeyDir |
+| RandomAccessFile | Binary file operations and random access |
+| NIO Files API | File replacement during compaction |
+| System.nanoTime() | Benchmark timing |
 
 ## Project Structure
 
@@ -280,32 +227,17 @@ bitcask-java/
 │               ├── KeyDirEntry.java
 │               └── Benchmark.java
 ├── data/
-│   └── data.bin
 ├── out/
 ├── .gitignore
 └── README.md
 ```
 
-| File | Responsibility |
-|---|---|
-| `Main.java` | Interactive command-line interface |
-| `Bitcask.java` | Core storage engine implementation |
-| `KeyDirEntry.java` | Stores value position and size |
-| `Benchmark.java` | Measures PUT and GET performance |
-| `data/data.bin` | Persistent append-only data file |
-
 ## Getting Started
 
 ### Prerequisites
 
-- Java Development Kit (JDK) 21 or higher.
-
-Verify your installation:
-
-```bash
-java -version
-javac -version
-```
+- Java Development Kit (JDK) 21 or later
+- Linux, macOS, or Windows
 
 ### Clone the Repository
 
@@ -316,92 +248,103 @@ cd bitcask-java
 
 ### Compile
 
-Run from the project root:
-
 ```bash
 javac -d out src/main/java/bitcask/*.java
 ```
 
-### Run the Application
+### Run
 
 ```bash
 java -cp out bitcask.Main
 ```
 
-### Run the Benchmark
+The application stores its data in `data/data.bin`.
 
-```bash
-java -cp out bitcask.Benchmark
-```
+## CLI Usage
 
-## Example CLI Session
+The command-line interface supports the following operations:
 
 ```text
-=== Bitcask Key-Value Store ===
-Commands: PUT, GET, DELETE, COMPACT, EXIT
+PUT name Prajwal
+GET name
+DELETE name
+COMPACT
+EXIT
+```
 
-bitcask> PUT username alice
+Example:
+
+```text
+> PUT name Prajwal
 Stored successfully!
 
-bitcask> GET username
-alice
+> GET name
+Prajwal
 
-bitcask> PUT username alice_v2
-Stored successfully!
+> DELETE name
+Deleted successfully!
 
-bitcask> GET username
-alice_v2
-
-bitcask> DELETE username
-Delete command completed!
-
-bitcask> GET username
+> GET name
 null
 
-bitcask> COMPACT
+> COMPACT
 Compaction successful!
+```
 
-bitcask> EXIT
-Exiting Bitcask...
+## Running the Benchmark
+
+The benchmark should be run from an isolated working directory to avoid modifying the application's normal database.
+
+Compile from the project root:
+
+```bash
+javac -d out src/main/java/bitcask/*.java
+```
+
+Create a separate benchmark directory:
+
+```bash
+mkdir -p /tmp/bitcask-benchmark/data
+cd /tmp/bitcask-benchmark
+```
+
+Run:
+
+```bash
+java -cp ~/bitcask-java/out bitcask.Benchmark
 ```
 
 ## Current Limitations
 
-This is an educational implementation focused on understanding the fundamental concepts behind log-structured key-value storage.
+This project focuses on demonstrating core Bitcask storage concepts rather than production-grade database reliability.
 
-1. **Single Log File:** Uses one data file instead of multiple immutable log segments as in the original Bitcask architecture.
-2. **RAM-Bounded Key Space:** KeyDir stores all active keys and their positions in memory. Memory usage grows with the number of unique keys.
-3. **Single-Process Access:** No synchronization or file locking is implemented for concurrent access from multiple threads or processes.
-4. **No Checksums:** Records do not include CRC checksums for detecting arbitrary data corruption.
-5. **No Explicit Disk Synchronization:** Writes do not explicitly call `fsync` or `FileDescriptor.sync()`, so strict power-loss durability is not guaranteed.
-6. **Compaction Concurrency:** Compaction does not protect against concurrent reads or writes during file replacement.
-7. **CLI Input Constraints:** The whitespace-based command parser does not support keys containing spaces.
+Current limitations include:
+
+- The KeyDir is maintained in memory, so memory usage grows with the number of keys.
+- The implementation is designed for single-process, single-writer usage.
+- No concurrent write coordination or locking is implemented.
+- No record checksums are used for detecting arbitrary data corruption.
+- Writes are not explicitly synchronized to disk using `fsync`.
+- Compaction does not provide full production-grade crash-safety guarantees.
 
 ## Learning Outcomes
 
-Through this project, I explored:
+Through this project, I explored and implemented:
 
-- Append-only and log-structured storage architectures.
-- Binary serialization and file I/O in Java.
-- In-memory indexing using HashMaps.
-- File offsets and random-access reads.
-- Tombstone-based deletion.
+- Append-only log-based storage.
+- In-memory indexing and direct file access.
+- Binary serialization and deserialization.
+- Tombstone-based logical deletion.
 - Startup recovery and incomplete-record handling.
-- Log compaction and storage reclamation.
-- Basic performance benchmarking.
+- Log compaction and stale-record removal.
+- Basic performance benchmarking in Java.
 
 ---
 
 <div align="center">
 
-  <h3>Built with Java 21</h3>
+**Built with Java 21**
 
-  <p>
-    <strong>Bitcask-inspired Persistent Key-Value Storage Engine</strong>
-  </p>
-
-  <p>
-    <a href="https://github.com/srishaprajwalg/bitcask-java">View Repository</a>
-  </p>
+Inspired by the [Bitcask paper](https://riak.com/assets/bitcask-intro.pdf).
 
 </div>
