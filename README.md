@@ -345,6 +345,6 @@ Through this project, I explored and implemented:
 
 **Built with Java 21**
 
-Inspired by the [Bitcask paper](https://riak.com/assets/bitcask-intro.pdf).
+Inspired by the [Bitcask paper](https://riak.com/assets/bitcask-intro.pdf) and [Bitcask coding challenge](https://codingchallenges.fyi/challenges/challenge-bitcask/).
 
 </div>
